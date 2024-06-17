@@ -49,12 +49,11 @@ open Lean Meta
 
 -/
 
-def mkRecOnVal (n : Name) (_iv : InductiveVal) : MetaM Expr := do
-  -- let recOnInfo ← getConstInfoDefn (mkRecOnName n)
-  -- return recOnInfo.value
+def mkRecOnValDefinitionVal (n : Name) : MetaM DefinitionVal := do
+  let env ← getEnv
   let .recInfo recInfo ← getConstInfo (mkRecName n)
     | throwError "{mkRecName n} not a recinfo"
-  forallTelescope recInfo.type fun xs _ =>
+  forallTelescope recInfo.type fun xs t => do
     let e := .const recInfo.name (recInfo.levelParams.map (.param ·))
     let e := mkAppN e xs
     -- We reorder the parameters
@@ -65,21 +64,13 @@ def mkRecOnVal (n : Name) (_iv : InductiveVal) : MetaM Expr := do
       xs[:AC_size] ++
       xs[AC_size + recInfo.numMinors:AC_size + recInfo.numMinors + 1 + recInfo.numIndices] ++
       xs[AC_size:AC_size + recInfo.numMinors]
-    mkLambdaFVars vs e
-
-run_meta do
-  let env ← getEnv
-  for (n, ci) in env.constants do
-    if ci.isInductive then
-      let recOnName := mkRecOnName n
-      unless env.contains  recOnName do
-        -- happens on .below and ._impl inductives. how to filter them?
-        -- logInfo m!"Missing {recOnName}"
-        continue
-
-      let newRecOnVal ← mkRecOnVal n ci.inductiveVal!
-      let oldVal := (← getConstInfoDefn recOnName).value
-      unless newRecOnVal == oldVal  do
-        throwError m!"Mismatch for {n}:{indentExpr oldVal}\nvs{indentExpr newRecOnVal}"
-
-  return ()
+    let type ← mkForallFVars vs t
+    let value ← mkLambdaFVars vs e
+    return {
+      name        := mkRecOnName n
+      levelParams := recInfo.levelParams
+      type        := type
+      value       := value
+      hints       := ReducibilityHints.abbrev
+      safety      := if env.hasUnsafe type || env.hasUnsafe value then DefinitionSafety.unsafe else DefinitionSafety.safe
+    }
