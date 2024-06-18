@@ -3,6 +3,10 @@ import Mathlib
 
 open Lean Meta
 
+set_option pp.universes true in
+run_meta checkInd ``PSet
+
+#exit
 run_meta do
   let env ← getEnv
   let mut count := 0

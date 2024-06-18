@@ -83,10 +83,20 @@ def mkBelowOrIBelow (indName : Name) (ibelow : Bool) : MetaM DefinitionVal := do
   let blvls := -- universe parameter names of ibelow/below
     if ibelow then recVal.levelParams.tail!
               else recVal.levelParams
+  let .some ilvl ← typeFormerTypeLevel indVal.type
+    | throwError "type {indVal.type} of inductive {indVal.name} not a type former?"
   let rlvl : Level :=  -- universe level of the resultant type
-    if ibelow then 0
-    -- TODO: reflexive
-              else .max 1 lvl
+    if ibelow then
+      0
+    else if indVal.isReflexive then
+      -- TODO: Port normalization
+      -- from level mk_max(level const & l1, level const & l2)  {
+      if let .max 1 lvl := ilvl then
+        mkLevelMax' (.succ lvl) lvl
+      else
+        mkLevelMax' (.succ lvl) ilvl
+    else
+      mkLevelMax' 1 lvl
 
   let refType :=
     if ibelow then
