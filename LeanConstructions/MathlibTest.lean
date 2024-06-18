@@ -6,7 +6,9 @@ open Lean Meta
 set_option pp.universes true in
 run_meta checkInd ``PSet
 
-#exit
+set_option pp.all true in
+run_meta checkInd ``Lean.Json
+
 run_meta do
   let env ← getEnv
   let mut count := 0

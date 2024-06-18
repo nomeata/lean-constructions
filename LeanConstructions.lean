@@ -29,17 +29,26 @@ def mkRecOnValDefinitionVal (n : Name) : MetaM DefinitionVal := do
     let value ← mkLambdaFVars vs e
     mkDefinitionValInferrringUnsafe (mkRecOnName n) recInfo.levelParams type value
 
-def mkPProd (lvl1 : Level) (lvl2 : Level) (e1 e2 : Expr) : Expr :=
-  if lvl1 matches .zero && lvl2 matches .zero then
-    mkApp2 (.const `And []) e1 e2
-  else
-    mkApp2 (.const ``PProd [lvl1, lvl2]) e1 e2
+def getLevelC (e : Expr) : MetaM Level := do
+  let type ← inferType e
+  let type ← ofExceptKernelException (Kernel.whnf (← getEnv) (← getLCtx) type)
+  match type with
+  | .sort lvl => return lvl
+  | _ => throwError "not a type"
 
-def mkNProd (lvl : Level) (es : Array Expr) : Expr :=
-  if let .zero := lvl then
-    es.foldr (init := .const ``True []) (mkPProd lvl lvl)
+def mkPProd (e1 e2 : Expr) : MetaM Expr := do
+  let lvl1 ← getLevel e1
+  let lvl2 ← getLevel e2
+  if lvl1 matches .zero && lvl2 matches .zero then
+    return mkApp2 (.const `And []) e1 e2
   else
-    es.foldr (init := .const ``PUnit [lvl]) (mkPProd lvl lvl)
+    return mkApp2 (.const ``PProd [lvl1, lvl2]) e1 e2
+
+def mkNProd (lvl : Level) (es : Array Expr) : MetaM Expr :=
+  if let .zero := lvl then
+    es.foldrM (init := .const ``True []) mkPProd
+  else
+    es.foldrM (init := .const ``PUnit [lvl]) mkPProd
 
 def withModifyFVarCodomain (e : Expr) (fvar : Expr) (k : MetaM α) : MetaM α := do
   let type ← forallTelescope (← inferType fvar) fun args _ => mkForallFVars args e
@@ -58,19 +67,18 @@ where
     if h : i < args.size then
       let arg := args[i]
       let argType ← inferType arg
-      let argLevel ← getLevel argType
       forallTelescope argType fun arg_args arg_type => do
         if typeFormers.contains arg_type.getAppFn then
           let name ← arg.fvarId!.getUserName
           let type' ← forallTelescope argType fun args _ => mkForallFVars args (.sort rlvl)
           withLocalDeclD name type' fun arg' => do
             let snd ← mkForallFVars arg_args (mkAppN arg' arg_args)
-            let e' := mkPProd argLevel rlvl argType snd
+            let e' ← mkPProd argType snd
             go (args.set ⟨i, h⟩ arg') (i + 1) (prods.push e')
         else
           go args (i + 1) prods
     else
-      mkLambdaFVars args (mkNProd rlvl prods)
+      mkLambdaFVars args (← mkNProd rlvl prods)
 
 -- ported from C. TODO: can this be unified with mkLevelMax'?
 def mkLevelMaxC (u v : Level) : Level := Id.run do
@@ -150,17 +158,25 @@ deriving instance BEq for ReducibilityHints
 deriving instance BEq for DefinitionVal
 deriving instance BEq for InductiveVal
 
+def eraseLevels (e : Expr) : CoreM Expr := do
+  Core.transform (← Core.betaReduce e) (pre := fun
+    | .const n _  => return .done (.const n [])
+    | .sort _ => return .done (.sort .zero)
+    | _ => return .continue)
+
 def checkDefnVal (n : Name) (suffix : String) (f : Name → MetaM DefinitionVal) : MetaM Unit := do
   let n' := .str n suffix
   if (← hasConst n') then
     if let .defnInfo oldVal ← getConstInfo n' then
       let newVal ← f n
+      check newVal.type
+      check newVal.value
       -- ignore inductives, to not get confused by the `.below` generated for inductive predicates
-      unless newVal == oldVal do
-        unless newVal.type == oldVal.type do
-          throwError m!"Mismatch for type of {n'}:{indentExpr oldVal.type}\nvs{indentExpr newVal.type}"
-        unless newVal.value == oldVal.value do
-          throwError m!"Mismatch for value of {n'}:{indentExpr oldVal.value}\nvs{indentExpr newVal.value}"
+      unless (← eraseLevels newVal.type) == (← eraseLevels oldVal.type) do
+        throwError m!"Mismatch for type of {n'}:{indentExpr oldVal.type}\nvs{indentExpr newVal.type}"
+      unless (← eraseLevels newVal.value) == (← eraseLevels oldVal.value) do
+        throwError m!"Mismatch for value of {n'}:{indentExpr (← eraseLevels oldVal.value)}\nvs{indentExpr (← eraseLevels newVal.value)}"
+      -- unless newVal == oldVal do
         throwError m!"Mismatch for {n'}" -- ":{oldVal}\nvs{newRecOnVal}"
 
 def checkInd (n : Name) : MetaM Unit := do
