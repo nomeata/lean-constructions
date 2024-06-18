@@ -50,22 +50,24 @@ def withModifyFVarsCodomain (e : Expr) (fvars : Array Expr) (k : MetaM α) : Met
   fvars.foldr (init := k) fun fvar k => withModifyFVarCodomain e fvar k
 
 def buildMinorPremise (rlvl : Level) (typeFormers : Array Expr) (args : Array Expr) : MetaM Expr :=
-  go 0 #[]
+  go args 0 #[]
 where
   ibelow := rlvl matches .zero
   -- e0 := if ibelow then .const ``True [] else .const ``PUnit [rlvl]
-  go (i : Nat) (prods : Array Expr) : MetaM Expr := do
+  go (args : Array Expr) (i : Nat) (prods : Array Expr) : MetaM Expr := do
     if h : i < args.size then
       let arg := args[i]
       let argType ← inferType arg
       forallTelescope argType fun arg_args arg_type => do
         if typeFormers.contains arg_type.getAppFn then
-          withModifyFVarCodomain (.sort rlvl) arg do
-            let snd ← mkForallFVars arg_args (mkAppN arg arg_args)
+          let name ← arg.fvarId!.getUserName
+          let type' ← forallTelescope argType fun args _ => mkForallFVars args (.sort rlvl)
+          withLocalDeclD name type' fun arg' => do
+            let snd ← mkForallFVars arg_args (mkAppN arg' arg_args)
             let e' ← mkPProd ibelow argType snd
-            go (i + 1) (prods.push e')
+            go (args.set ⟨i, h⟩ arg') (i + 1) (prods.push e')
         else
-          go (i + 1) prods
+          go args (i + 1) prods
     else
       mkLambdaFVars args (← mkNProd rlvl prods)
 
