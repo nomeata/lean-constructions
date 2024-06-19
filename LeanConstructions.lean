@@ -29,12 +29,9 @@ def mkRecOnValDefinitionVal (n : Name) : MetaM DefinitionVal := do
     let value ← mkLambdaFVars vs e
     mkDefinitionValInferrringUnsafe (mkRecOnName n) recInfo.levelParams type value
 
-def getLevelC (e : Expr) : MetaM Level := do
-  let type ← inferType e
-  let type ← ofExceptKernelException (Kernel.whnf (← getEnv) (← getLCtx) type)
-  match type with
-  | .sort lvl => return lvl
-  | _ => throwError "not a type"
+def mkPUnit : Level → Expr
+  | .zero => .const ``True []
+  | lvl   => .const ``PUnit [lvl]
 
 def mkPProd (e1 e2 : Expr) : MetaM Expr := do
   let lvl1 ← getLevel e1
@@ -45,10 +42,7 @@ def mkPProd (e1 e2 : Expr) : MetaM Expr := do
     return mkApp2 (.const ``PProd [lvl1, lvl2]) e1 e2
 
 def mkNProd (lvl : Level) (es : Array Expr) : MetaM Expr :=
-  if let .zero := lvl then
-    es.foldrM (init := .const ``True []) mkPProd
-  else
-    es.foldrM (init := .const ``PUnit [lvl]) mkPProd
+  es.foldrM (init := mkPUnit lvl) mkPProd
 
 def withModifyFVarCodomain (e : Expr) (fvar : Expr) (k : MetaM α) : MetaM α := do
   let type ← forallTelescope (← inferType fvar) fun args _ => mkForallFVars args e
@@ -80,21 +74,6 @@ where
     else
       mkLambdaFVars args (← mkNProd rlvl prods)
 
--- ported from C. TODO: can this be unified with mkLevelMax'?
-def mkLevelMaxC (u v : Level) : Level := Id.run do
-  if u.isExplicit && v.isExplicit then
-     return if u.getOffset ≥ v.getOffset then u else v
-  if u == v then return u
-  if u.isZero then return v
-  if v.isZero then return u
-  if let .max v1 v2 := v then
-    if u == v1 || u == v2 then return v
-  if let .max u1 u2 := u then
-    if v == u1 || v == u2 then return u
-  if u.getLevelOffset == v.getLevelOffset then
-    return if u.getOffset ≥ v.getOffset then u else v
-  return .max u v
-
 def mkBelowOrIBelow (indName : Name) (ibelow : Bool) : MetaM DefinitionVal := do
   let indVal ← getConstInfoInduct indName
   let recName := mkRecName indName
@@ -113,11 +92,11 @@ def mkBelowOrIBelow (indName : Name) (ibelow : Bool) : MetaM DefinitionVal := do
       0
     else if indVal.isReflexive then
       if let .max 1 lvl := ilvl then
-        mkLevelMaxC (.succ lvl) lvl
+        mkLevelMax' (.succ lvl) lvl
       else
-        mkLevelMaxC (.succ lvl) ilvl
+        mkLevelMax' (.succ lvl) ilvl
     else
-      mkLevelMaxC 1 lvl
+      mkLevelMax' 1 lvl
 
   let refType :=
     if ibelow then
@@ -158,10 +137,10 @@ deriving instance BEq for ReducibilityHints
 deriving instance BEq for DefinitionVal
 deriving instance BEq for InductiveVal
 
-def eraseLevels (e : Expr) : CoreM Expr := do
+def canon (e : Expr) : CoreM Expr := do
   Core.transform (← Core.betaReduce e) (pre := fun
-    | .const n _  => return .done (.const n [])
-    | .sort _ => return .done (.sort .zero)
+    | .const n ls  => return .done (.const n (ls.map (·.normalize)))
+    | .sort l => return .done (.sort l.normalize)
     | _ => return .continue)
 
 def checkDefnVal (n : Name) (suffix : String) (f : Name → MetaM DefinitionVal) : MetaM Unit := do
@@ -172,10 +151,10 @@ def checkDefnVal (n : Name) (suffix : String) (f : Name → MetaM DefinitionVal)
       check newVal.type
       check newVal.value
       -- ignore inductives, to not get confused by the `.below` generated for inductive predicates
-      unless (← eraseLevels newVal.type) == (← eraseLevels oldVal.type) do
+      unless (← canon newVal.type) == (← canon oldVal.type) do
         throwError m!"Mismatch for type of {n'}:{indentExpr oldVal.type}\nvs{indentExpr newVal.type}"
-      unless (← eraseLevels newVal.value) == (← eraseLevels oldVal.value) do
-        throwError m!"Mismatch for value of {n'}:{indentExpr (← eraseLevels oldVal.value)}\nvs{indentExpr (← eraseLevels newVal.value)}"
+      unless (← canon newVal.value) == (← canon oldVal.value) do
+        throwError m!"Mismatch for value of {n'}:{indentExpr (← canon oldVal.value)}\nvs{indentExpr (← canon newVal.value)}"
       -- unless newVal == oldVal do
         throwError m!"Mismatch for {n'}" -- ":{oldVal}\nvs{newRecOnVal}"
 
@@ -185,7 +164,7 @@ def checkInd (n : Name) : MetaM Unit := do
 
   checkDefnVal n "recOn" mkRecOnValDefinitionVal
   checkDefnVal n "below" (mkBelowOrIBelow · false)
-  -- checkDefnVal n "ibelow" mkRecOnValDefinitionVal
+  checkDefnVal n "ibelow" (mkBelowOrIBelow . true)
 
 -- #print Nat.below
 run_meta checkInd ``Acc
