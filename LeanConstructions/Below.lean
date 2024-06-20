@@ -7,7 +7,8 @@ prelude
 import LeanConstructions.Utils
 import Lean.Meta.InferType
 
-open Lean Meta
+namespace Lean
+open Meta
 
 def mkPUnit : Level → Expr
   | .zero => .const ``True []

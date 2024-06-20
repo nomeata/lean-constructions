@@ -1,7 +1,8 @@
 import LeanConstructions
 import Mathlib
 
-open Lean Meta
+namespace Lean
+open Meta
 
 set_option pp.universes true in
 run_meta checkInd ``PSet

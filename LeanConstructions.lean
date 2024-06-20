@@ -2,7 +2,8 @@ import Lean
 import LeanConstructions.RecOn
 import LeanConstructions.Below
 
-open Lean Meta
+namespace Lean
+open Meta
 
 deriving instance BEq for ReducibilityHints
 deriving instance BEq for DefinitionVal

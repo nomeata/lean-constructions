@@ -7,7 +7,8 @@ prelude
 import LeanConstructions.Utils
 import Lean.Meta.InferType
 
-open Lean Meta
+namespace Lean
+open Meta
 
 def mkRecOnValDefinitionVal (n : Name) : MetaM DefinitionVal := do
   let .recInfo recInfo ← getConstInfo (mkRecName n)
