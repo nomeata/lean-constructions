@@ -48,7 +48,7 @@ private def mkPProdFst (e : Expr) : MetaM Expr := do
   match_expr t with
   | PProd _ _ => return .proj ``PProd 0 e
   | And _ _ =>   return .proj ``And 0 e
-  | _ => throwError "Cannot project out of{indentExpr e}\nof Type{indentExpr t}"
+  | _ => throwError "Cannot project .1 out of{indentExpr e}\nof Type{indentExpr t}"
 
 /-- `PProd.snd` or `And.right` (as projections) -/
 private def mkPProdSnd (e : Expr) : MetaM Expr := do
@@ -56,7 +56,7 @@ private def mkPProdSnd (e : Expr) : MetaM Expr := do
   match_expr t with
   | PProd _ _ => return .proj ``PProd 1 e
   | And _ _ =>   return .proj ``And 1 e
-  | _ => throwError "Cannot project out of{indentExpr e}\nof Type{indentExpr t}"
+  | _ => throwError "Cannot project .2 out of{indentExpr e}\nof Type{indentExpr t}"
 
 /--
 If `minorType` is the type of a minor premies of a recursor, such as
@@ -77,28 +77,28 @@ of type
 ```
 The parameter `typeFormers` are the `motive`s.
 -/
-private def buildMinorPremise (rlvl : Level) (typeFormers : Array Expr) (below : Expr)
-    (fs : Array Expr) (minorType : Expr) : MetaM Expr :=
+private def buildMinorPremise (rlvl : Level) (typeFormers : Array Expr)
+    (belows : Array Expr) (fs : Array Expr) (minorType : Expr) : MetaM Expr :=
   forallTelescope minorType fun minor_args minor_type => do
     let rec go (prods : Array Expr) : List Expr → MetaM Expr
-      | [] => do
-        let b ← mkNProdMk rlvl prods
-        let f := fs[0]! -- TODO
-        let fArgs := minor_type.getAppArgs
-        mkPProdMk (mkAppN f (fArgs.push b)) b
+      | [] => minor_type.withApp fun minor_type_fn minor_type_args => do
+          let b ← mkNProdMk rlvl prods
+          let .some ⟨idx, _⟩ := typeFormers.indexOf? minor_type_fn
+            | throwError m!"Did not find {minor_type} in {typeFormers}"
+          mkPProdMk (mkAppN fs[idx]! (minor_type_args.push b)) b
       | arg::args => do
         let argType ← inferType arg
         forallTelescope argType fun arg_args arg_type => do
           arg_type.withApp fun arg_type_fn arg_type_args => do
-            if typeFormers.contains arg_type_fn then
+            if let .some idx := typeFormers.indexOf? arg_type_fn then
               let name ← arg.fvarId!.getUserName
               let type' ← mkForallFVars arg_args
-                (← mkPProd arg_type (mkAppN below arg_type_args) )
+                (← mkPProd arg_type (mkAppN belows[idx]! arg_type_args) )
               withLocalDeclD name type' fun arg' => do
                 if arg_args.isEmpty then
                   mkLambdaFVars #[arg'] (← go (prods.push arg') args)
                 else
-                  let r := mkAppN arg arg_args
+                  let r := mkAppN arg' arg_args
                   let r₁ ← mkLambdaFVars arg_args (← mkPProdFst r)
                   let r₂ ← mkLambdaFVars arg_args (← mkPProdSnd r)
                   let r ← mkPProdMk r₁ r₂
@@ -147,6 +147,9 @@ def mkBRecOnOrBInductionOn (indName : Name) (ind : Bool) : MetaM DefinitionVal :
   -- universe arguments of below/ibelow
   let blvls := if ind then lvls else lvl::lvls
 
+  let .some ⟨idx, _⟩ := indVal.all.toArray.indexOf? indName
+    | throwError m!"Did not find {indName} in {indVal.all}"
+
   let .some ilvl ← typeFormerTypeLevel indVal.type
     | throwError "type {indVal.type} of inductive {indVal.name} not a type former?"
   -- universe level of the resultant type
@@ -176,27 +179,27 @@ def mkBRecOnOrBInductionOn (indName : Name) (ind : Bool) : MetaM DefinitionVal :
     let minors      : Array Expr := refArgs[indVal.numParams + recVal.numMotives:indVal.numParams + recVal.numMotives + recVal.numMinors]
     let remaining   : Array Expr := refArgs[indVal.numParams + recVal.numMotives + recVal.numMinors:]
 
-    -- TODO: Need multiple belows if we have multiple type formers
-    let below := Expr.const (if ind then mkIBelowName indName else mkBelowName indName) blvls
-    let below := mkAppN below (params ++ typeFormers)
+    -- One `below` for each type former (same parameters)
+    let belows := indVal.all.toArray.map fun n =>
+      let belowName := if ind then mkIBelowName n else mkBelowName n
+      mkAppN (.const belowName blvls) (params ++ typeFormers)
 
     -- create types of functionals (one for each type former)
     --   (F_1 : (t : List α) → (f : List.below t) → motive t)
     -- and bring parameters of that type into scope
     let mut fDecls : Array (Name × (Array Expr -> MetaM Expr)) := #[]
-    for typeFormer in typeFormers, i in [:typeFormers.size] do
+    for typeFormer in typeFormers, below in belows, i in [:typeFormers.size] do
       let fType ← forallTelescope (← inferType typeFormer) fun targs _ => do
         withLocalDeclD `f (mkAppN below targs) fun f =>
           mkForallFVars (targs.push f) (mkAppN typeFormer targs)
       let fName := .mkSimple s!"F_{i + 1}"
       fDecls := fDecls.push (fName, fun _ => pure fType)
     withLocalDeclsD fDecls fun fs => do
-
       let mut val := .const recName (rlvl :: lvls)
       -- add parameters
       val := mkAppN val params
       -- add type formers
-      for typeFormer in typeFormers do
+      for typeFormer in typeFormers, below in belows do
         -- example: (motive := fun t => PProd (motive t) (@List.below α motive t))
         let arg ← forallTelescope (← inferType typeFormer) fun targs _ => do
           let cType := mkAppN typeFormer targs
@@ -206,7 +209,7 @@ def mkBRecOnOrBInductionOn (indName : Name) (ind : Bool) : MetaM DefinitionVal :
         val := .app val arg
       -- add minor premises
       for minor in minors do
-        let arg ← buildMinorPremise rlvl typeFormers below fs (← inferType minor)
+        let arg ← buildMinorPremise rlvl typeFormers belows fs (← inferType minor)
         val := .app val arg
       -- add indices and major premise
       val := mkAppN val remaining
@@ -215,7 +218,7 @@ def mkBRecOnOrBInductionOn (indName : Name) (ind : Bool) : MetaM DefinitionVal :
 
       -- All paramaters of `.rec` besides the `minors` become parameters of `.bRecOn`, and the `fs`
       let below_params := params ++ typeFormers ++ remaining ++ fs
-      let type ← mkForallFVars below_params (mkAppN typeFormers[0]! remaining)
+      let type ← mkForallFVars below_params (mkAppN typeFormers[idx]! remaining)
       val ← mkLambdaFVars below_params val
 
       let name := if ind then mkIBelowName indName else mkBelowName indName

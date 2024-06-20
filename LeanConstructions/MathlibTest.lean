@@ -4,11 +4,10 @@ import Mathlib
 namespace Lean
 open Meta
 
-set_option pp.universes true in
 run_meta checkInd ``PSet
 
-set_option pp.all true in
 run_meta checkInd ``Lean.Json
+run_meta checkInd ``Mathlib.Tactic.Ring.ExSum
 
 run_meta do
   let env ← getEnv
