@@ -42,20 +42,20 @@ private def mkNProd (lvl : Level) (es : Array Expr) : MetaM Expr :=
 private def mkNProdMk (lvl : Level) (es : Array Expr) : MetaM Expr :=
   es.foldrM (init := mkPUnitMk lvl) mkPProdMk
 
-/-- `PProd.fst` or `And.left` -/
+/-- `PProd.fst` or `And.left` (as projections) -/
 private def mkPProdFst (e : Expr) : MetaM Expr := do
   let t ← whnf (← inferType e)
   match_expr t with
-  | PProd t₁ t₂ => return mkApp3 (.const ``PProd.fst t.getAppFn.constLevels!) t₁ t₂ e
-  | And t₁ t₂ =>   return mkApp3 (.const ``And.left []) t₁ t₂ e
+  | PProd _ _ => return .proj ``PProd 0 e
+  | And _ _ =>   return .proj ``And 0 e
   | _ => throwError "Cannot project out of{indentExpr e}\nof Type{indentExpr t}"
 
-/-- `PProd.snd` or `And.right` -/
+/-- `PProd.snd` or `And.right` (as projections) -/
 private def mkPProdSnd (e : Expr) : MetaM Expr := do
   let t ← whnf (← inferType e)
   match_expr t with
-  | PProd t₁ t₂ => return mkApp3 (.const ``PProd.snd t.getAppFn.constLevels!) t₁ t₂ e
-  | And t₁ t₂ =>   return mkApp3 (.const ``And.right []) t₁ t₂ e
+  | PProd _ _ => return .proj ``PProd 1 e
+  | And _ _ =>   return .proj ``And 1 e
   | _ => throwError "Cannot project out of{indentExpr e}\nof Type{indentExpr t}"
 
 /--
