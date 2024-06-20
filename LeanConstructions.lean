@@ -39,6 +39,7 @@ def checkInd (n : Name) : MetaM Unit := do
   checkDefnVal n "below" (mkBelowOrIBelow · false)
   checkDefnVal n "ibelow" (mkBelowOrIBelow . true)
   checkDefnVal n "brecOn" (mkBRecOnOrBInductionOn · false)
+  checkDefnVal n "binductionOn" (mkBRecOnOrBInductionOn · true)
 
 -- set_option pp.universes true in
 run_meta checkInd ``Nat
