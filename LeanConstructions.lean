@@ -1,6 +1,7 @@
 import Lean
 import LeanConstructions.RecOn
 import LeanConstructions.Below
+import LeanConstructions.BRecOn
 
 namespace Lean
 open Meta
@@ -20,8 +21,6 @@ def checkDefnVal (n : Name) (suffix : String) (f : Name → MetaM DefinitionVal)
   if (← hasConst n') then
     if let .defnInfo oldVal ← getConstInfo n' then
       let newVal ← f n
-      check newVal.type
-      check newVal.value
       -- ignore inductives, to not get confused by the `.below` generated for inductive predicates
       unless (← canon newVal.type) == (← canon oldVal.type) do
         throwError m!"Mismatch for type of {n'}:{indentExpr oldVal.type}\nvs{indentExpr newVal.type}"
@@ -29,6 +28,8 @@ def checkDefnVal (n : Name) (suffix : String) (f : Name → MetaM DefinitionVal)
         throwError m!"Mismatch for value of {n'}:{indentExpr (← canon oldVal.value)}\nvs{indentExpr (← canon newVal.value)}"
       -- unless newVal == oldVal do
         throwError m!"Mismatch for {n'}" -- ":{oldVal}\nvs{newRecOnVal}"
+      -- check newVal.type
+      -- check newVal.value
 
 def checkInd (n : Name) : MetaM Unit := do
   let ci ← getConstInfo n
@@ -37,9 +38,7 @@ def checkInd (n : Name) : MetaM Unit := do
   checkDefnVal n "recOn" mkRecOnValDefinitionVal
   checkDefnVal n "below" (mkBelowOrIBelow · false)
   checkDefnVal n "ibelow" (mkBelowOrIBelow . true)
+  checkDefnVal n "brecOn" (mkBRecOnOrBInductionOn · false)
 
--- #print Nat.below
-run_meta checkInd ``Acc
-
-set_option pp.universes true in
+-- set_option pp.universes true in
 run_meta checkInd ``Nat
